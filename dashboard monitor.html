@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Smart Industry Monitoring Dashboard</title>
+<style>
+:root{
+  --bg:#e6e8e9; --panel:#f6f7f7; --ink:#1d2327; --muted:#5d676d; --line:#c5cbcf;
+  --ok:#1f7a4d; --warn:#b36b00; --bad:#b3261e; --crit:#6b0f0f; --accent:#1d2327;
+}
+@media (prefers-color-scheme: dark){
+  :root{--bg:#171b1e; --panel:#21272b; --ink:#e8ecee; --muted:#9aa5ab; --line:#3a444a;
+        --ok:#4fc58a; --warn:#f0a83a; --bad:#ff6b5e; --crit:#ff3b30; --accent:#e8ecee;}
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);
+  font-family:"Segoe UI",system-ui,-apple-system,Roboto,Helvetica,Arial,sans-serif;line-height:1.45}
+main{max-width:980px;margin:0 auto;padding:20px 16px 40px}
+header{display:flex;flex-wrap:wrap;gap:12px;justify-content:space-between;align-items:center;margin-bottom:16px}
+h1{font-size:1.25rem;margin:0;font-weight:700}
+h2{font-size:.95rem;margin:0 0 10px;font-weight:600}
+.conn{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+input{padding:8px 10px;border:1px solid var(--line);background:var(--panel);color:var(--ink);
+  border-radius:4px;min-width:250px;font:inherit}
+button{padding:8px 14px;border:1px solid var(--accent);background:var(--accent);color:var(--bg);
+  border-radius:4px;font:inherit;cursor:pointer}
+button.ghost{background:transparent;color:var(--ink);border-color:var(--line)}
+button:focus-visible,input:focus-visible{outline:3px solid var(--warn);outline-offset:2px}
+#banner{padding:18px 20px;border-radius:6px;color:#fff;margin-bottom:16px;background:var(--ok)}
+#banner.danger{background:var(--warn)} #banner.disaster{background:var(--bad)} #banner.evac{background:var(--crit)}
+#banner strong{display:block;font-size:1.6rem;letter-spacing:.01em}
+#banner span{opacity:.92;font-size:.95rem}
+#banner.evac strong{animation:pulse 1s steps(2,jump-none) infinite}
+@keyframes pulse{50%{opacity:.45}}
+@media (prefers-reduced-motion: reduce){#banner.evac strong{animation:none}}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px;margin-bottom:16px}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:14px 16px}
+.label{color:var(--muted);font-size:.85rem}
+.value{font-size:2rem;font-weight:700;font-variant-numeric:tabular-nums}
+.value small{font-size:.9rem;font-weight:500;color:var(--muted);margin-left:3px}
+.leds{display:flex;gap:10px;align-items:center;margin-top:6px}
+.led{width:22px;height:22px;border-radius:50%;border:2px solid var(--line);background:transparent}
+.led.g.on{background:var(--ok);border-color:var(--ok);box-shadow:0 0 8px var(--ok)}
+.led.r.on{background:var(--bad);border-color:var(--bad);box-shadow:0 0 8px var(--bad)}
+.two{display:grid;grid-template-columns:2fr 1fr;gap:12px}
+@media (max-width:760px){.two{grid-template-columns:1fr}}
+svg{width:100%;height:auto;display:block}
+.axis{stroke:var(--line);stroke-width:1} .tline{stroke-width:1;stroke-dasharray:5 4}
+#hist{list-style:none;margin:0;padding:0;max-height:260px;overflow:auto;font-size:.9rem}
+#hist li{padding:7px 0;border-bottom:1px solid var(--line)}
+#hist .t{color:var(--muted);font-variant-numeric:tabular-nums}
+.tag{font-weight:700}
+.tag.danger{color:var(--warn)} .tag.disaster{color:var(--bad)} .tag.evac{color:var(--crit)} .tag.ok{color:var(--ok)}
+.note{color:var(--muted);font-size:.85rem;margin-top:8px}
+#mode{font-size:.85rem;color:var(--muted)}
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <div>
+      <h1>Smart Industry Monitoring System</h1>
+      <div id="mode">Demo mode: simulated data</div>
+    </div>
+    <div class="conn">
+      <input id="url" type="url" placeholder="http://192.168.1.50/data" aria-label="ESP32 data address">
+      <button id="connect">Connect</button>
+      <button id="demo" class="ghost">Demo mode</button>
+    </div>
+  </header>
+
+  <section id="banner" aria-live="polite">
+    <strong id="bannerTitle">NORMAL CONDITION</strong>
+    <span id="bannerSub">All readings are within safe limits.</span>
+  </section>
+
+  <section class="grid">
+    <div class="panel"><div class="label">Temperature</div><div class="value"><span id="temp">--</span><small>°C</small></div></div>
+    <div class="panel"><div class="label">Humidity</div><div class="value"><span id="hum">--</span><small>%</small></div></div>
+    <div class="panel"><div class="label">Gas level (raw ADC)</div><div class="value"><span id="gas">--</span></div></div>
+    <div class="panel"><div class="label">LED state</div>
+      <div class="leds"><span class="led g" id="ledG"></span><span class="led r" id="ledR"></span><span id="ledText">--</span></div></div>
+  </section>
+
+  <section class="two">
+    <div class="panel">
+      <h2>Gas history</h2>
+      <svg id="chart" viewBox="0 0 600 220" role="img" aria-label="Gas level history"></svg>
+      <div class="note">Dashed lines show the danger and disaster thresholds.</div>
+    </div>
+    <div class="panel">
+      <h2>Alert location</h2>
+      <div class="value" style="font-size:1.1rem" id="loc">Location unavailable</div>
+      <div class="note" id="locNote">Waiting for a GPS fix.</div>
+      <p><a id="maplink" href="#" target="_blank" rel="noopener" hidden>Open in Google Maps</a></p>
+      <button id="sim" class="ghost">Simulate gas leak</button>
+    </div>
+  </section>
+
+  <section class="panel" style="margin-top:12px">
+    <h2>Alert history</h2>
+    <ul id="hist"><li class="t">No alerts yet.</li></ul>
+  </section>
+</main>
+
+<script>
+/* ---- Edit these so they match the thresholds in your ESP32 code ---- */
+const GAS_DANGER = 1800;      // GAS_THRESHOLD in the sketch
+const GAS_DISASTER = 2600;    // GAS_DISASTER in the sketch
+const TEMP_DANGER = 50;       // MAX_TEMP_C in the sketch
+const TEMP_DISASTER = 60;     // MAX_TEMP_DISASTER in the sketch
+const POLL_MS = 2000;
+const MAX_POINTS = 60;
+/* -------------------------------------------------------------------- */
+
+const $ = id => document.getElementById(id);
+let mode = "demo", timer = null, history = [], lastStatus = null, leak = false;
+let sim = {temperature: 28.8, humidity: 60, gas: 1200};
+
+const fmtT = v => (v == null ? "--" : Number(v).toFixed(1));
+
+/* Live mode: use the level the ESP32 decided, so the dashboard always matches the device. */
+function fromDevice(d){
+  if (d.fault) return {key:"danger", title:"SENSOR FAULT", sub:"The DHT22 is not responding. Check its wiring."};
+  if (d.level === undefined) return classify(d);
+  return [
+    {key:"ok", title:"NORMAL CONDITION", sub:"All readings are within safe limits."},
+    {key:"danger", title:"DANGER / ALERT", sub:"A reading is above the danger limit."},
+    {key:"disaster", title:"DISASTER", sub:"A reading is at a critical level."},
+    {key:"evac", title:"EVACUATE / ALERT", sub:"Gas and temperature are both critical. Leave the area now."}
+  ][d.level] || classify(d);
+}
+
+function classify(d){
+  const gasD = d.gas >= GAS_DISASTER, tempD = d.temperature >= TEMP_DISASTER;
+  const gasW = d.gas >= GAS_DANGER, tempW = d.temperature >= TEMP_DANGER;
+  if (gasD && tempD) return {key:"evac", title:"EVACUATE / ALERT", sub:"Gas and temperature are both at disaster level. Leave the area now."};
+  if (gasD || tempD) return {key:"disaster", title:"DISASTER", sub: gasD ? "Gas level is critical." : "Temperature is critical."};
+  if (gasW || tempW) return {key:"danger", title:"DANGER / ALERT", sub: gasW ? "Gas level is above the danger limit." : "Temperature is above the danger limit."};
+  return {key:"ok", title:"NORMAL CONDITION", sub:"All readings are within safe limits."};
+}
+
+function simulate(){
+  const r = (a) => (Math.random() - 0.5) * a;
+  sim.temperature = Math.max(20, sim.temperature + r(0.6) + (leak ? 0.9 : (28.8 - sim.temperature) * 0.05));
+  sim.humidity = Math.min(95, Math.max(30, sim.humidity + r(1.5)));
+  sim.gas = Math.max(300, sim.gas + r(120) + (leak ? 320 : (1200 - sim.gas) * 0.08));
+  return {temperature: +sim.temperature.toFixed(1), humidity: Math.round(sim.humidity),
+          gas: Math.round(sim.gas), lat: null, lng: null};
+}
+
+async function tick(){
+  let d;
+  if (mode === "demo") d = simulate();
+  else {
+    try {
+      const res = await fetch($("url").value, {cache:"no-store"});
+      d = await res.json();
+      $("mode").textContent = "Live: connected to " + $("url").value;
+    } catch (e) {
+      $("mode").textContent = "Live: cannot reach the ESP32. Check the address, Wi-Fi and CORS header.";
+      return;
+    }
+  }
+  render(d);
+}
+
+function render(d){
+  const st = fromDevice(d);
+  $("temp").textContent = fmtT(d.temperature);
+  $("hum").textContent = d.humidity == null ? "--" : Math.round(d.humidity);
+  $("gas").textContent = d.gas;
+  const b = $("banner");
+  b.className = st.key === "ok" ? "" : st.key;
+  $("bannerTitle").textContent = st.title;
+  $("bannerSub").textContent = st.sub;
+  const normal = st.key === "ok";
+  $("ledG").classList.toggle("on", normal);
+  $("ledR").classList.toggle("on", !normal);
+  $("ledText").textContent = normal ? "Green on" : "Red on";
+
+  const hasFix = d.lat != null && d.lng != null;
+  $("loc").textContent = hasFix ? `${(+d.lat).toFixed(5)}, ${(+d.lng).toFixed(5)}` : "Location unavailable";
+  $("locNote").textContent = hasFix ? "GPS fix acquired." : "Waiting for a GPS fix. The module needs a clear view of the sky.";
+  const ml = $("maplink");
+  ml.hidden = !hasFix;
+  if (hasFix) ml.href = `https://www.google.com/maps?q=${d.lat},${d.lng}`;
+
+  history.push(d.gas);
+  if (history.length > MAX_POINTS) history.shift();
+  drawChart();
+
+  if (st.key !== lastStatus){
+    logAlert(st, d, hasFix);
+    lastStatus = st.key;
+  }
+}
+
+function logAlert(st, d, hasFix){
+  const ul = $("hist");
+  if (ul.firstChild && ul.firstChild.className === "t") ul.innerHTML = "";
+  const li = document.createElement("li");
+  const loc = hasFix ? `${(+d.lat).toFixed(4)}, ${(+d.lng).toFixed(4)}` : "location unavailable";
+  li.innerHTML = `<span class="t">${new Date().toLocaleTimeString()}</span> <span class="tag ${st.key}">${st.title}</span><br>` +
+    `Gas ${d.gas}, ${fmtT(d.temperature)} °C, ${loc}`;
+  ul.prepend(li);
+}
+
+function drawChart(){
+  const W = 600, H = 220, L = 40, B = 20, T = 10;
+  const max = Math.max(GAS_DISASTER * 1.2, ...history), y = v => H - B - (v / max) * (H - B - T);
+  const x = i => L + (i / (MAX_POINTS - 1)) * (W - L - 8);
+  const pts = history.map((v, i) => `${x(i).toFixed(1)},${y(v).toFixed(1)}`).join(" ");
+  const css = n => getComputedStyle(document.documentElement).getPropertyValue(n);
+  $("chart").innerHTML =
+    `<line class="axis" x1="${L}" y1="${T}" x2="${L}" y2="${H-B}"/><line class="axis" x1="${L}" y1="${H-B}" x2="${W-8}" y2="${H-B}"/>` +
+    `<line class="tline" x1="${L}" x2="${W-8}" y1="${y(GAS_DANGER)}" y2="${y(GAS_DANGER)}" stroke="${css('--warn')}"/>` +
+    `<line class="tline" x1="${L}" x2="${W-8}" y1="${y(GAS_DISASTER)}" y2="${y(GAS_DISASTER)}" stroke="${css('--bad')}"/>` +
+    `<text x="${L+4}" y="${y(GAS_DANGER)-4}" font-size="11" fill="${css('--muted')}">danger ${GAS_DANGER}</text>` +
+    `<text x="${L+4}" y="${y(GAS_DISASTER)-4}" font-size="11" fill="${css('--muted')}">disaster ${GAS_DISASTER}</text>` +
+    `<text x="4" y="${T+8}" font-size="11" fill="${css('--muted')}">${Math.round(max)}</text>` +
+    `<text x="4" y="${H-B}" font-size="11" fill="${css('--muted')}">0</text>` +
+    `<polyline fill="none" stroke="${css('--ink')}" stroke-width="2" points="${pts}"/>`;
+}
+
+function start(m){
+  mode = m; history = []; lastStatus = null;
+  clearInterval(timer);
+  if (m === "demo") $("mode").textContent = "Demo mode: simulated data";
+  tick(); timer = setInterval(tick, POLL_MS);
+}
+
+$("connect").onclick = () => { if ($("url").value.trim()) start("live"); else $("url").focus(); };
+$("demo").onclick = () => start("demo");
+$("sim").onclick = () => {
+  leak = !leak;
+  $("sim").textContent = leak ? "Stop gas leak" : "Simulate gas leak";
+  if (mode !== "demo") start("demo");
+};
+start("demo");
+</script>
+</body>
+</html>
